@@ -344,15 +344,24 @@ class Verify_Type(Kgen_Plugin):
 
                             if stmt.is_numeric():
 
-                                # typececls
-                                attrs = {'type_spec': stmt.name, 'selector':stmt.selector, 'entity_decls': \
-                                    ['nrmsdiff_%s'%entity_name, 'rmsdiff_%s'%entity_name ]}
-                                part_append_genknode(subrobj, DECL_PART, stmt.__class__, attrs=attrs)
+                                is_complex = isinstance(stmt, (typedecl_statements.Complex, typedecl_statements.DoubleComplex))
 
-                                attrs = {'type_spec': stmt.name, 'attrspec': ['ALLOCATABLE'], 'selector':stmt.selector, 'entity_decls': \
-                                    ['buf1_%s(%s)'%(entity_name, dim_shape),'buf2_%s(%s)'%(entity_name, dim_shape)]}
-                                part_append_genknode(subrobj, DECL_PART, stmt.__class__, attrs=attrs)
+                                if is_complex:
+                                    attrs = {'type_spec': 'REAL', 'selector': (None, 'kgen_dp'), 'entity_decls': \
+                                        ['nrmsdiff_%s'%entity_name, 'rmsdiff_%s'%entity_name ]}
+                                    part_append_genknode(subrobj, DECL_PART, typedecl_statements.Real, attrs=attrs)
 
+                                    attrs = {'type_spec': 'REAL', 'attrspec': ['ALLOCATABLE'], 'selector': (None, 'kgen_dp'), 'entity_decls': \
+                                        ['buf1_%s(%s)'%(entity_name, dim_shape),'buf2_%s(%s)'%(entity_name, dim_shape)]}
+                                    part_append_genknode(subrobj, DECL_PART, typedecl_statements.Real, attrs=attrs)
+                                else:
+                                    attrs = {'type_spec': stmt.name, 'selector':stmt.selector, 'entity_decls': \
+                                        ['nrmsdiff_%s'%entity_name, 'rmsdiff_%s'%entity_name ]}
+                                    part_append_genknode(subrobj, DECL_PART, stmt.__class__, attrs=attrs)
+
+                                    attrs = {'type_spec': stmt.name, 'attrspec': ['ALLOCATABLE'], 'selector':stmt.selector, 'entity_decls': \
+                                        ['buf1_%s(%s)'%(entity_name, dim_shape),'buf2_%s(%s)'%(entity_name, dim_shape)]}
+                                    part_append_genknode(subrobj, DECL_PART, stmt.__class__, attrs=attrs)
                                 attrs = {'items': ['buf1_%s(%s)'%(entity_name, get_size)]}
                                 part_append_genknode(ifidobj, EXEC_PART, statements.Allocate, attrs=attrs)
 
@@ -516,10 +525,6 @@ class Verify_Type(Kgen_Plugin):
                                 part_append_genknode(ifidobj, EXEC_PART, statements.Assignment, attrs=attrs)
 
                         else:
-                            # diff
-                            attrs = {'type_spec': stmt.name, 'selector':stmt.selector, 'entity_decls': ['diff_%s'%entity_name]}
-                            part_append_genknode(subrobj, DECL_PART, stmt.__class__, attrs=attrs)
-
                             if stmt.name=='logical':
                                 attrs = {'expr': 'var%%%s .EQV. kgenref_var%%%s'%(entity_name, entity_name)}
                             else:
@@ -544,6 +549,17 @@ class Verify_Type(Kgen_Plugin):
                             part_append_genknode(ifidobj, EXEC_PART, statements.Else)
 
                             if stmt.is_numeric():
+
+                                # Declare diff only for numeric types
+                                is_complex = isinstance(stmt, (typedecl_statements.Complex, typedecl_statements.DoubleComplex))
+                                if is_complex:
+                                    attrs = {'type_spec': 'REAL', 'selector': (None, 'kgen_dp'),
+                                        'entity_decls': ['diff_%s'%entity_name]}
+                                    part_append_genknode(subrobj, DECL_PART, typedecl_statements.Real, attrs=attrs)
+                                else:
+                                    attrs = {'type_spec': stmt.name, 'selector':stmt.selector,
+                                        'entity_decls': ['diff_%s'%entity_name]}
+                                    part_append_genknode(subrobj, DECL_PART, stmt.__class__, attrs=attrs)
 
                                 attrs = {'variable': 'diff_%s'%entity_name, 'sign': '=', 'expr': 'ABS(var%%%s - kgenref_var%%%s)'%(entity_name, entity_name)}
                                 part_append_genknode(ifidobj, EXEC_PART, statements.Assignment, attrs=attrs)

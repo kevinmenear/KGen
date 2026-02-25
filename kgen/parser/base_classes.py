@@ -861,7 +861,8 @@ class Statement(object):
         # check if request is maded by this stmt itself
         if self is request.originator:
             if isinstance(self, TypeDeclarationStatement):
-                if request.uname.firstpartname() in [ n.split('=')[0].strip() for n in self.entity_decls ]:
+                if request.uname.firstpartname() in [ n.split('=')[0].strip() for n in self.entity_decls ] and \
+                    any( isinstance(self, resolver) for resolver in request.resolvers ):
                     return True
             else:
                 return False

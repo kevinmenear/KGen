@@ -107,8 +107,9 @@ class Gen_Type(Kgen_Plugin):
     def create_read_intrinsic(self, subrobj, entity_name, stmt, var):
 
         pobj = gen_read_istrue(subrobj, var, 'var%%%s'%entity_name)
+        is_deferred_len_char = isinstance(stmt, typedecl_statements.Character) and var.is_allocatable() and stmt.get_length()==':'
 
-        if var.is_allocatable() or var.is_pointer():
+        if (var.is_allocatable() or var.is_pointer()) and not is_deferred_len_char:
             attrs = {'items': ['var%%%s'%entity_name]}
             part_append_genknode(pobj, EXEC_PART, statements.Allocate, attrs=attrs)
 
