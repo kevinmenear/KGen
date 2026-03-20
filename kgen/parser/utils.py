@@ -139,6 +139,7 @@ def parse_bind(line, item = None):
         newline = newitem.get_line()
     else:
         newitem = None
+        newline = line
     newline = newline[4:].lstrip()
     i = newline.find(')')
     assert i!=-1,`newline`
