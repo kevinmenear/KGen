@@ -6953,6 +6953,8 @@ items : ({'INTENT', 'OPTIONAL', 'SAVE'}, Intent_Spec)
             return 'OPTIONAL', None
         if len(string)==4 and string.upper()=='SAVE':
             return 'SAVE', None
+        if len(string)==7 and string.upper()=='POINTER':
+            return 'POINTER', None
 
     def tostr(self):
         if self.items[1] is None:

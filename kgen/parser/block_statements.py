@@ -1596,7 +1596,7 @@ intrinsic_type_spec = [ SubprogramPrefix, Integer , Real,
 derived_type_spec = [  ]
 type_spec = intrinsic_type_spec + derived_type_spec
 #declaration_type_spec = intrinsic_type_spec + [ TypeStmt, Class, Procedure ] # TEMP
-declaration_type_spec = intrinsic_type_spec + [ TypeStmt, Class ]
+declaration_type_spec = intrinsic_type_spec + [ TypeStmt, Class, Procedure ]
 
 type_declaration_stmt = declaration_type_spec
 
