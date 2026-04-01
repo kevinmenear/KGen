@@ -146,18 +146,14 @@ def splitquote(line, stopchar=None, lower=False, quotechars = '"\''):
             break
         l = []
         l_append = l.append
-        nofslashes = 0
         if stopchar is None:
             # search for string start
             while 1:
-                if char in quotechars and not nofslashes % 2:
+                if char in quotechars:
+                    # Fortran does not use backslash escaping
                     stopchar = char
                     i -= 1
                     break
-                if char=='\\':
-                    nofslashes += 1
-                else:
-                    nofslashes = 0
                 l_append(char)
                 try:
                     char = line[i]; i += 1
@@ -180,14 +176,12 @@ def splitquote(line, stopchar=None, lower=False, quotechars = '"\''):
                 break
         # else continued string
         while 1:
-            if char==stopchar and not nofslashes % 2:
+            if char==stopchar:
+                # Fortran does not use backslash escaping in string literals.
+                # A quote character always terminates the string.
                 l_append(char)
                 stopchar = None
                 break
-            if char=='\\':
-                nofslashes += 1
-            else:
-                nofslashes = 0
             l_append(char)
             try:
                 char = line[i]; i += 1
