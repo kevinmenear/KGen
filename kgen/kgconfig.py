@@ -369,7 +369,7 @@ class Config(object):
         self._attrs['model']['types']['etime']['minval'] = None
         self._attrs['model']['types']['etime']['maxval'] = None
         self._attrs['model']['types']['etime']['timer'] = None
-        self._attrs['model']['types']['etime']['enabled'] = True
+        self._attrs['model']['types']['etime']['enabled'] = False
         self._attrs['model']['types']['papi'] = collections.OrderedDict()
         self._attrs['model']['types']['papi']['id'] = '2'
         self._attrs['model']['types']['papi']['name'] = 'papi'
