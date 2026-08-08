@@ -102,6 +102,49 @@ vprefix = 'kv'
 
 MAXLEN_SUBPNAME =40
 
+# A CHARACTER(*) dummy carries the literal '*' as the length half of its
+# selector, and a deferred-length one carries ':'. Both flow into GENERATED
+# PROCEDURE NAMES below, where neither is a legal identifier character:
+#
+#     SUBROUTINE kr_parsedbary_opt_character_*__dim1(...)
+#
+# gfortran rejects that, and the failure is silent in the worst way. The same
+# name generator names the kw_ routines KGen injects into the application for
+# state capture, so the state-generation build fails to compile, the previously
+# installed library stays in place, the simulation runs normally, and extraction
+# reports "No state data captured" -- which reads as an unreached call site
+# rather than a compile error.
+_SUBPNAME_CHARMAP = {'*': 'star', ':': 'colon'}
+
+def sanitize_subpname_part(part):
+    """Make one selector component safe to embed in a Fortran procedure name."""
+    if part is None:
+        return ''
+    out = []
+    for ch in str(part):
+        if ch.isalnum() or ch == '_':
+            out.append(ch)
+        else:
+            out.append(_SUBPNAME_CHARMAP.get(ch, '_'))
+    return ''.join(out)
+
+def is_assumed_length_char(stmt):
+    """True for CHARACTER(*) / CHARACTER(LEN=*) declarations.
+
+    Legal for a dummy argument, illegal for a local -- which is exactly the
+    problem, because KGen hoists a parentblock's dummies into the kernel
+    driver's LOCAL scope. Such a variable becomes deferred-length allocatable
+    there, and its length has to travel in the state file.
+    """
+    if stmt.__class__.__name__.upper() != 'CHARACTER':
+        return False
+    selector = getattr(stmt, 'selector', None)
+    return bool(selector) and selector[0] == '*'
+
+def deferred_length_selector(stmt):
+    """The CHARACTER(LEN=:) selector matching an assumed-length one."""
+    return (':',) + tuple(stmt.selector[1:])
+
 def get_ancestor_name(stmt, generation):
     assert stmt and hasattr(stmt, 'parent'), 'Given stmt does not have parent attribute.'
     assert isinstance(generation, int), 'Not integer type of generation.'
@@ -145,7 +188,8 @@ def get_typedecl_subpname(stmt, entity_name):
     var = stmt.get_variable(entity_name)
     if var is None: return 'Unknown_name'
 
-    prefix = [ get_parentname(stmt), stmt.name ] + list(stmt.selector)
+    prefix = [ get_parentname(stmt), stmt.name ] + \
+        [ sanitize_subpname_part(sel) for sel in stmt.selector ]
     l = []
     if var.is_array(): l.append('dim%d'%var.rank)
     if var.is_pointer(): l.append('ptr')

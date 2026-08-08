@@ -2,7 +2,7 @@
 
 from parser import statements, block_statements, typedecl_statements
 from gencore_utils import kernel_gencore_contains, state_gencore_contains, get_dtype_writename, get_dtype_readname, \
-    gen_read_istrue, gen_write_istrue, check_class_derived
+    gen_read_istrue, gen_write_istrue, check_class_derived, is_assumed_length_char, deferred_length_selector
 
 def create_read_subr(subrname, entity_name, parent, var, stmt, allocate=False, ename_prefix=''):
 
@@ -27,11 +27,19 @@ def create_read_subr(subrname, entity_name, parent, var, stmt, allocate=False, e
 
         # variable A
         #import pdb; pdb.set_trace()
+        # An assumed-length CHARACTER cannot be a local, so the caller (the
+        # kernel driver) declares it CHARACTER(LEN=:), ALLOCATABLE. A deferred
+        # length actual argument requires a deferred length dummy, so this
+        # routine has to match -- and it must ALLOCATE with an explicit length,
+        # which means the length has to be read out of the state file.
+        deferred_len = is_assumed_length_char(stmt)
+        selector = deferred_length_selector(stmt) if deferred_len else stmt.selector
+
         attrspec = ['INTENT(INOUT)']
         if var.is_pointer(): attrspec.append('POINTER')
-        if var.is_allocatable() or allocate: attrspec.append('ALLOCATABLE')
+        if var.is_allocatable() or allocate or deferred_len: attrspec.append('ALLOCATABLE')
         if var.is_array(): attrspec.append('DIMENSION(%s)'% ','.join(':'*var.rank))
-        attrs = {'type_spec': stmt.__class__.__name__.upper(), 'attrspec': attrspec, 'selector':stmt.selector, 'entity_decls': ['var']}
+        attrs = {'type_spec': stmt.__class__.__name__.upper(), 'attrspec': attrspec, 'selector':selector, 'entity_decls': ['var']}
         part_append_genknode(subrobj, DECL_PART, stmt.__class__, attrs=attrs)
 
         # kgen_unit
@@ -61,9 +69,19 @@ def create_read_subr(subrname, entity_name, parent, var, stmt, allocate=False, e
             attrs = {'type_spec': 'INTEGER', 'attrspec': ['DIMENSION(2,%d)'%var.rank], 'entity_decls': [ 'kgen_bound' ]}
             part_append_genknode(subrobj, DECL_PART, typedecl_statements.Integer, attrs=attrs)
 
+        # element length, written by the matching kw_ routine
+        if deferred_len:
+            attrs = {'type_spec': 'INTEGER', 'entity_decls': ['kgen_len']}
+            part_append_genknode(subrobj, DECL_PART, typedecl_statements.Integer, attrs=attrs)
+
         part_append_comment(subrobj, DECL_PART, '')
 
-        pobj = gen_read_istrue(subrobj, var, 'var', allocate=allocate)
+        pobj = gen_read_istrue(subrobj, var, 'var', allocate=allocate or deferred_len)
+
+        # Must precede the bound reads -- create_write_subr writes it first.
+        if deferred_len:
+            attrs = {'items': ['kgen_len'], 'specs': ['UNIT = kgen_unit']}
+            part_append_genknode(pobj, EXEC_PART, statements.Read, attrs=attrs)
 
         if var.is_array():
             bound_args = []
@@ -77,8 +95,9 @@ def create_read_subr(subrname, entity_name, parent, var, stmt, allocate=False, e
                 #bound_args.append('kgen_bound(2,%d)-kgen_bound(1,%d)+1'%(dim+1, dim+1))
                 bound_args.append('kgen_bound(1,%d):kgen_bound(2,%d)'%(dim+1, dim+1))
 
-            if var.is_allocatable() or var.is_pointer() or allocate:
+            if var.is_allocatable() or var.is_pointer() or allocate or deferred_len:
                 attrs = {'items': ['var(%s)'%', '.join(bound_args)]}
+                if deferred_len: attrs['spec'] = 'CHARACTER(LEN=kgen_len)'
                 part_append_genknode(pobj, EXEC_PART, statements.Allocate, attrs=attrs)
 
             if stmt.is_derived() or is_class_derived:
@@ -139,8 +158,9 @@ def create_read_subr(subrname, entity_name, parent, var, stmt, allocate=False, e
 
         else: # scalar
 
-            if var.is_allocatable() or var.is_pointer() or allocate:
+            if var.is_allocatable() or var.is_pointer() or allocate or deferred_len:
                 attrs = {'items': ['var']}
+                if deferred_len: attrs['spec'] = 'CHARACTER(LEN=kgen_len)'
                 part_append_genknode(pobj, EXEC_PART, statements.Allocate, attrs=attrs)
 
             if stmt.is_derived() or is_class_derived:
@@ -237,6 +257,13 @@ def create_write_subr(subrname, entity_name, parent, var, stmt, implicit=False):
 
         pobj = gen_write_istrue(subrobj, var, 'var')
         part_append_comment(subrobj, EXEC_PART, '')
+
+        # The reader is a kernel-driver LOCAL, so it is deferred-length
+        # allocatable and cannot know the element length any other way.
+        # Written FIRST -- create_read_subr reads it before the bounds.
+        if is_assumed_length_char(stmt):
+            attrs = {'items': ['LEN(var)'], 'specs': ['UNIT = kgen_unit']}
+            part_append_gensnode(pobj, EXEC_PART, statements.Write, attrs=attrs)
 
         if var.is_array():
             for dim in range(var.rank):

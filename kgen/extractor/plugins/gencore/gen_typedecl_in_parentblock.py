@@ -6,7 +6,8 @@ from gencore_utils import STATE_PBLOCK_WRITE_IN_ARGS, STATE_PBLOCK_WRITE_IN_LOCA
     DRIVER_READ_IN_ARGS, KERNEL_PBLOCK_READ_IN_LOCALS, KERNEL_PBLOCK_READ_OUT_LOCALS, \
     DRIVER_DECL_PART, DRIVER_USE_PART, get_typedecl_writename, get_dtype_writename, state_gencore_contains, \
     get_topname, get_typedecl_readname, get_dtype_readname, shared_objects, process_spec_stmts, is_zero_array, \
-    is_excluded, is_remove_state, namedgen_read_istrue, namedgen_write_istrue, check_class_derived 
+    is_excluded, is_remove_state, namedgen_read_istrue, namedgen_write_istrue, check_class_derived, \
+    is_assumed_length_char, deferred_length_selector 
 from gencore_subr import create_write_subr, create_read_subr
 
 class Gen_Typedecl_In_Parentblock(Kgen_Plugin):
@@ -128,13 +129,20 @@ class Gen_Typedecl_In_Parentblock(Kgen_Plugin):
                         getinfo('kernel_driver_callsite_args').append(entity_name)
 
                     # add typedecl in driver
-                    attrs={'type_spec':stmt.__class__.__name__.upper(), 'selector':stmt.selector, 'entity_decls': [entity_name]}
+                    # CHARACTER(*) is legal for the dummy this came from and
+                    # illegal for the driver LOCAL it becomes, so it turns into
+                    # CHARACTER(LEN=:), ALLOCATABLE and its length travels in
+                    # the state file (see create_read_subr/create_write_subr).
+                    deferred_len = is_assumed_length_char(stmt)
+                    selector = deferred_length_selector(stmt) if deferred_len else stmt.selector
+                    attrs={'type_spec':stmt.__class__.__name__.upper(), 'selector':selector, 'entity_decls': [entity_name]}
                     attrspec = []
                     if var.is_array():
                         attrspec.append('DIMENSION(%s)'%','.join(':'*var.rank))
                         if not var.is_pointer(): attrspec.append('ALLOCATABLE')
                         # deallocate
                     if var.is_pointer(): attrspec.append('POINTER')
+                    if deferred_len and 'ALLOCATABLE' not in attrspec: attrspec.append('ALLOCATABLE')
                     attrs['attrspec'] = attrspec 
                     namedpart_append_genknode(node.kgen_kernel_id, DRIVER_DECL_PART, stmt.__class__, attrs=attrs)
 
@@ -291,8 +299,15 @@ class Gen_Typedecl_In_Parentblock(Kgen_Plugin):
                 #entity_decls = get_decls(localout_names, stmt.entity_decls, prefix='kgenref_')
                 #entity_enames = get_enames(localout_names, stmt.entity_decls, prefix='kgenref_')
 
+                # kgenref_x is a local, so CHARACTER(*) is illegal here too.
+                # The variable it mirrors is in scope, so its length is an
+                # ordinary specification expression: CHARACTER(LEN=LEN(x)).
+                if is_assumed_length_char(stmt):
+                    refselector = ('LEN(%s)'%localout_name,) + tuple(stmt.selector[1:])
+                else:
+                    refselector = stmt.selector
                 attrs = {'type_spec': stmt.__class__.__name__.upper(), 'attrspec': attrspec, \
-                    'selector':stmt.selector, 'entity_decls': [ 'kgenref_%s'%localout_name ]}
+                    'selector':refselector, 'entity_decls': [ 'kgenref_%s'%localout_name ]}
                     #'selector':stmt.selector, 'entity_decls': entity_decls}
                 part_append_genknode(node.kgen_parent, DECL_PART, stmt.__class__, attrs=attrs)
 
@@ -346,6 +361,13 @@ class Gen_Typedecl_In_Parentblock(Kgen_Plugin):
                                     (stmt.name, stmt.name))
                             else:
                                 self.create_read_call(node.kgen_kernel_id, partid, subrname, entity_name, stmt, var, ename_prefix=ename_prefix)
+                    elif is_assumed_length_char(stmt):
+                        # deferred length: needs the ALLOCATE that only the
+                        # generated subroutine can do (see create_read_subr)
+                        self.create_read_call(node.kgen_kernel_id, partid, subrname, entity_name, stmt, var, ename_prefix=ename_prefix)
+                        if subrname not in self.kernel_created_subrs:
+                            create_read_subr(subrname, entity_name, node.kgen_parent, var, stmt, ename_prefix=ename_prefix, allocate=True)
+                            self.kernel_created_subrs.append(subrname)
                     else: # intrinsic type
                         self.create_read_intrinsic(node.kgen_kernel_id, partid, entity_name, stmt, var, ename_prefix=ename_prefix)
 
@@ -379,6 +401,11 @@ class Gen_Typedecl_In_Parentblock(Kgen_Plugin):
                                 (stmt.name, stmt.name))
                         else:
                             self.create_read_call(node.kgen_kernel_id, partid, subrname, entity_name, stmt, var)
+                elif is_assumed_length_char(stmt):
+                    self.create_read_call(node.kgen_kernel_id, partid, subrname, entity_name, stmt, var)
+                    if subrname not in self.driver_created_subrs:
+                        create_read_subr(subrname, entity_name, shared_objects['driver_object'], var, stmt, allocate=True)
+                        self.driver_created_subrs.append(subrname)
                 else: # intrinsic type
                     self.create_read_intrinsic(node.kgen_kernel_id, partid, entity_name, stmt, var)
 
@@ -465,6 +492,13 @@ class Gen_Typedecl_In_Parentblock(Kgen_Plugin):
                                     (stmt.name, stmt.name))
                             else:
                                 self.create_write_call(node.kgen_kernel_id, partid, subrname, entity_name, stmt, var)
+                    elif is_assumed_length_char(stmt):
+                        # must mirror the read side exactly: the length record
+                        # is emitted by create_write_subr, not inline
+                        self.create_write_call(node.kgen_kernel_id, partid, subrname, entity_name, stmt, var)
+                        if subrname not in self.state_created_subrs:
+                            create_write_subr(subrname, entity_name, node.kgen_parent, var, stmt)
+                            self.state_created_subrs.append(subrname)
                     else: # intrinsic type
                         self.create_write_intrinsic(node.kgen_kernel_id, partid, entity_name, stmt, var)
 
