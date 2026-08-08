@@ -184,12 +184,23 @@ class Gen_K_Callsite_File(Kgen_Plugin):
         namedpart_link_part(node, KERNEL_TBLOCK_CONTAINS_PART, CONTAINS_PART)
         namedpart_link_part(node, KERNEL_TBLOCK_SUBP_PART, SUBP_PART)
 
-        # ensure public for parentblock stmt
-        checks = lambda n: isinstance(n.kgen_stmt, statements.Public) and n.kgen_stmt.items and \
-            getinfo('parentblock_stmt').name in n.kgen_stmt.items
-        if not part_has_node(node, DECL_PART, checks):
-            attrs = {'items':[getinfo('parentblock_stmt').name]}
-            part_append_genknode(node, DECL_PART, statements.Public, attrs=attrs)
+        # Ensure the parentblock is PUBLIC so the kernel driver can reach it.
+        #
+        # Only emit this when the top block is a MODULE. An access-spec
+        # statement is legal only in a module specification part, so adding one
+        # to a bare SUBROUTINE/FUNCTION program unit produces
+        #   Error: PUBLIC statement at (1) is only allowed in the
+        #          specification part of a module
+        # and the kernel fails to build. A call site inside a non-module
+        # procedure -- for instance a BIND(C) entry point such as ROSCO's
+        # DISCON -- needs no access spec at all: the driver links to it as an
+        # external symbol.
+        if isinstance(getinfo('topblock_stmt'), block_statements.Module):
+            checks = lambda n: isinstance(n.kgen_stmt, statements.Public) and n.kgen_stmt.items and \
+                getinfo('parentblock_stmt').name in n.kgen_stmt.items
+            if not part_has_node(node, DECL_PART, checks):
+                attrs = {'items':[getinfo('parentblock_stmt').name]}
+                part_append_genknode(node, DECL_PART, statements.Public, attrs=attrs)
 
         if getinfo('add_mpi_frame'):
             part_append_comment(node, DECL_PART, '#ifdef _MPI', style='rawtext')
