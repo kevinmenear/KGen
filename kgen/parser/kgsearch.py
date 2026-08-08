@@ -500,6 +500,20 @@ def search_Char_Literal_Constant(stmt, node, gentype=None):
         get_name_or_defer(stmt, Fortran2003.Name(node.items[1]), res_typedecl)
     #get_name_or_defer(stmt, node.items[0], res_typedecl)
 
+def search_Char_Selector(stmt, node, gentype=None):
+    """ Identifying a name in Char_Selector node"""
+    # Char_Selector.items = ( <type-param-value> for LEN,
+    #                         <scalar-int-initialization-expr> for KIND )
+    # Either may be None: CHARACTER(KIND=C_CHAR) carries no LEN, and a bare
+    # CHARACTER(len-expr) is matched by Length_Selector instead. The LEN part is
+    # a value expression and the KIND part a kind expression, so they resolve
+    # against different resolver sets -- mirroring search_Kind_Selector for the
+    # kind half and search_Length_Selector for the length half.
+    if node.items[0] is not None:
+        get_name_or_defer(stmt, node.items[0], res_value)
+    if node.items[1] is not None:
+        get_name_or_defer(stmt, node.items[1], res_kind)
+
 def search_Length_Selector(stmt, node, gentype=None): 
     """ Identifying a name in Length_Selector node"""
     for item in node.items:
