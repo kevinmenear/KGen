@@ -29,6 +29,7 @@
 # D) generate in (named?) data block
 # E) Use module for dtype list and manipulate functions. Use Interface for assigning pointer
 
+import re
 from collections import OrderedDict
 from parser import statements, typedecl_statements, block_statements
 
@@ -141,8 +142,62 @@ def is_assumed_length_char(stmt):
     selector = getattr(stmt, 'selector', None)
     return bool(selector) and selector[0] == '*'
 
+def is_automatic_length_char(stmt):
+    """True for CHARACTER(n) where n is a variable of the declaration's own scope.
+
+    An AUTOMATIC length -- `CHARACTER(accINFILE_size) :: accINFILE(...)`, where
+    accINFILE_size is another dummy -- has exactly the property
+    is_assumed_length_char describes, and the same consequence: legal on the
+    dummy it was written for, ILLEGAL on the kernel-driver LOCAL that KGen
+    hoists it into, because a local's character length must be a constant
+    specification expression. gfortran says so and stops:
+
+        CHARACTER(LEN=accinfile_size), DIMENSION(:), ALLOCATABLE :: accinfile
+        Error: Variable 'accinfile_size' cannot appear in the expression at (1)
+
+    Unlike the CHARACTER(*) case this one fails LOUDLY, at the kernel build, so
+    it costs a diagnosis rather than a wrong answer. It is still a KGen defect
+    and not a usage error: the pragma was at a call site, the parentblock is a
+    subroutine, and the declaration KGen copied is ordinary legal Fortran.
+
+    DELIBERATELY NARROW. It fires only when the length expression names an
+    entity that THIS SCOPE declares (`typedecl is not None`) as a non-PARAMETER
+    variable. A length that is a literal, or a named constant from a USEd module
+    -- `CHARACTER(MaxParamLength)`, which ROSCO_Helpers uses everywhere -- is a
+    constant expression in the driver too and is left exactly as it was, so no
+    already-measured kernel changes shape. get_variable() is NOT used to make
+    that test: it CREATES the variable when the name is absent, which would
+    report every intrinsic in the expression as a non-parameter variable.
+    """
+    if stmt.__class__.__name__.upper() != 'CHARACTER':
+        return False
+    selector = getattr(stmt, 'selector', None)
+    if not selector or not selector[0]:
+        return False
+    length = str(selector[0]).strip()
+    if length in ('*', ':') or length.isdigit():
+        return False
+    scope = getattr(stmt, 'parent', None)
+    variables = getattr(getattr(scope, 'a', None), 'variables', None)
+    if not variables:
+        return False
+    for name in re.findall(r'[A-Za-z_]\w*', length):
+        var = variables.get(name)
+        if var is not None and var.typedecl is not None and not var.is_parameter():
+            return True
+    return False
+
+def hoists_as_deferred_length(stmt):
+    """True when this CHARACTER cannot keep its length as a kernel-driver local.
+
+    The two reasons are different in the source and identical in the driver, so
+    every generator that hoists a parentblock ARGUMENT asks this one question
+    rather than either half of it.
+    """
+    return is_assumed_length_char(stmt) or is_automatic_length_char(stmt)
+
 def deferred_length_selector(stmt):
-    """The CHARACTER(LEN=:) selector matching an assumed-length one."""
+    """The CHARACTER(LEN=:) selector matching an assumed- or automatic-length one."""
     return (':',) + tuple(stmt.selector[1:])
 
 def get_ancestor_name(stmt, generation):

@@ -4,7 +4,7 @@ from parser import statements, block_statements, typedecl_statements
 from gencore_utils import kernel_gencore_contains, state_gencore_contains, get_dtype_writename, get_dtype_readname, \
     gen_read_istrue, gen_write_istrue, check_class_derived, is_assumed_length_char, deferred_length_selector
 
-def create_read_subr(subrname, entity_name, parent, var, stmt, allocate=False, ename_prefix=''):
+def create_read_subr(subrname, entity_name, parent, var, stmt, allocate=False, ename_prefix='', deferred_len=False):
 
     checks = lambda n: isinstance(n.kgen_stmt, block_statements.Subroutine) and n.name==subrname
 
@@ -32,7 +32,15 @@ def create_read_subr(subrname, entity_name, parent, var, stmt, allocate=False, e
         # length actual argument requires a deferred length dummy, so this
         # routine has to match -- and it must ALLOCATE with an explicit length,
         # which means the length has to be read out of the state file.
-        deferred_len = is_assumed_length_char(stmt)
+        #
+        # `deferred_len` also arrives as an argument, because the SECOND reason a
+        # hoisted CHARACTER must go deferred -- an AUTOMATIC length, CHARACTER(n)
+        # with n another dummy -- is not visible in `stmt` alone: the same
+        # declaration is legal for a parentblock LOCAL (which stays in a
+        # subroutine scope) and illegal for a parentblock ARGUMENT (which becomes
+        # a PROGRAM local). Only the caller knows which it is hoisting, so only
+        # the caller can answer it. See gencore_utils.is_automatic_length_char.
+        deferred_len = deferred_len or is_assumed_length_char(stmt)
         selector = deferred_length_selector(stmt) if deferred_len else stmt.selector
 
         attrspec = ['INTENT(INOUT)']
@@ -199,7 +207,7 @@ def create_read_subr(subrname, entity_name, parent, var, stmt, allocate=False, e
                 attrs = {'items': ['"KGEN DEBUG: " // printname // " = "', 'var']}
                 part_append_genknode(ifpvarobj, EXEC_PART, statements.Write, attrs=attrs)
 
-def create_write_subr(subrname, entity_name, parent, var, stmt, implicit=False):
+def create_write_subr(subrname, entity_name, parent, var, stmt, implicit=False, deferred_len=False):
     checks = lambda n: isinstance(n.kgen_stmt, block_statements.Subroutine) and n.name==subrname
 
     is_class_derived = check_class_derived(stmt)
@@ -261,7 +269,11 @@ def create_write_subr(subrname, entity_name, parent, var, stmt, implicit=False):
         # The reader is a kernel-driver LOCAL, so it is deferred-length
         # allocatable and cannot know the element length any other way.
         # Written FIRST -- create_read_subr reads it before the bounds.
-        if is_assumed_length_char(stmt):
+        #
+        # The two sides must agree about this record or every field after it is
+        # read at the wrong offset, so `deferred_len` is passed from the same
+        # call site that passes it to create_read_subr rather than recomputed.
+        if deferred_len or is_assumed_length_char(stmt):
             attrs = {'items': ['LEN(var)'], 'specs': ['UNIT = kgen_unit']}
             part_append_gensnode(pobj, EXEC_PART, statements.Write, attrs=attrs)
 

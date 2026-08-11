@@ -7,7 +7,7 @@ from gencore_utils import STATE_PBLOCK_WRITE_IN_ARGS, STATE_PBLOCK_WRITE_IN_LOCA
     DRIVER_DECL_PART, DRIVER_USE_PART, get_typedecl_writename, get_dtype_writename, state_gencore_contains, \
     get_topname, get_typedecl_readname, get_dtype_readname, shared_objects, process_spec_stmts, is_zero_array, \
     is_excluded, is_remove_state, namedgen_read_istrue, namedgen_write_istrue, check_class_derived, \
-    is_assumed_length_char, deferred_length_selector 
+    is_assumed_length_char, deferred_length_selector, hoists_as_deferred_length, is_automatic_length_char
 from gencore_subr import create_write_subr, create_read_subr
 
 class Gen_Typedecl_In_Parentblock(Kgen_Plugin):
@@ -129,11 +129,12 @@ class Gen_Typedecl_In_Parentblock(Kgen_Plugin):
                         getinfo('kernel_driver_callsite_args').append(entity_name)
 
                     # add typedecl in driver
-                    # CHARACTER(*) is legal for the dummy this came from and
-                    # illegal for the driver LOCAL it becomes, so it turns into
+                    # CHARACTER(*) -- and CHARACTER(n) with n another dummy --
+                    # is legal for the dummy this came from and illegal for the
+                    # driver LOCAL it becomes, so it turns into
                     # CHARACTER(LEN=:), ALLOCATABLE and its length travels in
                     # the state file (see create_read_subr/create_write_subr).
-                    deferred_len = is_assumed_length_char(stmt)
+                    deferred_len = hoists_as_deferred_length(stmt)
                     selector = deferred_length_selector(stmt) if deferred_len else stmt.selector
                     attrs={'type_spec':stmt.__class__.__name__.upper(), 'selector':selector, 'entity_decls': [entity_name]}
                     attrspec = []
@@ -372,13 +373,20 @@ class Gen_Typedecl_In_Parentblock(Kgen_Plugin):
                         self.create_read_intrinsic(node.kgen_kernel_id, partid, entity_name, stmt, var, ename_prefix=ename_prefix)
 
         # for kernel - argument variables
+        #
+        # These, and only these, become LOCALS OF THE DRIVER PROGRAM, so these
+        # and only these need a CHARACTER length that survives the move. The
+        # localvartypes loop above stays in the kernel's copy of the parentblock,
+        # a SUBROUTINE, where an automatic length is legal and is left alone.
         for entity_name, partid in argintype:
             var = stmt.get_variable(entity_name)
             subrname = get_typedecl_readname(stmt, entity_name)
+            hoisted_defer = hoists_as_deferred_length(stmt)
             if var.is_array():
                 self.create_read_call(node.kgen_kernel_id, partid, subrname, entity_name, stmt, var)
                 if subrname not in self.driver_created_subrs:
-                    create_read_subr(subrname, entity_name, shared_objects['driver_object'], var, stmt, allocate=True)
+                    create_read_subr(subrname, entity_name, shared_objects['driver_object'], var, stmt, allocate=True,
+                        deferred_len=hoisted_defer)
                     self.driver_created_subrs.append(subrname)
             else: # scalar
                 if stmt.is_derived() or is_class_derived or var.is_pointer():
@@ -401,10 +409,11 @@ class Gen_Typedecl_In_Parentblock(Kgen_Plugin):
                                 (stmt.name, stmt.name))
                         else:
                             self.create_read_call(node.kgen_kernel_id, partid, subrname, entity_name, stmt, var)
-                elif is_assumed_length_char(stmt):
+                elif hoisted_defer:
                     self.create_read_call(node.kgen_kernel_id, partid, subrname, entity_name, stmt, var)
                     if subrname not in self.driver_created_subrs:
-                        create_read_subr(subrname, entity_name, shared_objects['driver_object'], var, stmt, allocate=True)
+                        create_read_subr(subrname, entity_name, shared_objects['driver_object'], var, stmt, allocate=True,
+                            deferred_len=hoisted_defer)
                         self.driver_created_subrs.append(subrname)
                 else: # intrinsic type
                     self.create_read_intrinsic(node.kgen_kernel_id, partid, entity_name, stmt, var)
@@ -450,26 +459,41 @@ class Gen_Typedecl_In_Parentblock(Kgen_Plugin):
             for entity_name, partid in vartype:
                 var = stmt.get_variable(entity_name)
                 subrname = get_typedecl_writename(stmt, entity_name)
+                # THE WRITE SIDE MUST DECIDE THIS THE SAME WAY THE READ SIDE
+                # DOES, or the length record is written and not read (or read
+                # and not written) and every field after it lands at the wrong
+                # offset in the state file. The read side defers only for
+                # ARGUMENTS, because only arguments become driver locals, so the
+                # `argintype` test is part of the condition and not an
+                # optimisation. It qualifies ONLY the automatic-length half: a
+                # CHARACTER(*) local is not legal Fortran, so that half is an
+                # argument by construction and the read side defers on it
+                # wherever it is classified.
+                hoisted_defer = is_assumed_length_char(stmt) or \
+                    (vartypename == 'argintype' and is_automatic_length_char(stmt))
                 if var.is_array():
                     if is_zero_array(var, stmt): continue
                     if stmt.is_derived() or is_class_derived:
                         self.create_write_call(node.kgen_kernel_id, partid, subrname, entity_name, stmt, var)
                         if subrname not in self.state_created_subrs:
-                            create_write_subr(subrname, entity_name, node.kgen_parent, var, stmt)
+                            create_write_subr(subrname, entity_name, node.kgen_parent, var, stmt,
+                                deferred_len=hoisted_defer)
                             self.state_created_subrs.append(subrname)
                     else: # intrinsic type
                         if var.is_explicit_shape_array():
                             if vartypename=='argintype' or var.is_pointer():
                                 self.create_write_call(node.kgen_kernel_id, partid, subrname, entity_name, stmt, var)
                                 if subrname not in self.state_created_subrs:
-                                    create_write_subr(subrname, entity_name, node.kgen_parent, var, stmt)
+                                    create_write_subr(subrname, entity_name, node.kgen_parent, var, stmt,
+                                        deferred_len=hoisted_defer)
                                     self.state_created_subrs.append(subrname)
                             else:
                                 self.create_write_intrinsic(node.kgen_kernel_id, partid, entity_name, stmt, var)
                         else: # implicit array
                             self.create_write_call(node.kgen_kernel_id, partid, subrname, entity_name, stmt, var)
                             if subrname not in self.state_created_subrs:
-                                create_write_subr(subrname, entity_name, node.kgen_parent, var, stmt)
+                                create_write_subr(subrname, entity_name, node.kgen_parent, var, stmt,
+                                    deferred_len=hoisted_defer)
                                 self.state_created_subrs.append(subrname)
                 else: # scalar
                     if stmt.is_derived() or is_class_derived or var.is_pointer():
@@ -492,12 +516,13 @@ class Gen_Typedecl_In_Parentblock(Kgen_Plugin):
                                     (stmt.name, stmt.name))
                             else:
                                 self.create_write_call(node.kgen_kernel_id, partid, subrname, entity_name, stmt, var)
-                    elif is_assumed_length_char(stmt):
+                    elif hoisted_defer:
                         # must mirror the read side exactly: the length record
                         # is emitted by create_write_subr, not inline
                         self.create_write_call(node.kgen_kernel_id, partid, subrname, entity_name, stmt, var)
                         if subrname not in self.state_created_subrs:
-                            create_write_subr(subrname, entity_name, node.kgen_parent, var, stmt)
+                            create_write_subr(subrname, entity_name, node.kgen_parent, var, stmt,
+                                deferred_len=hoisted_defer)
                             self.state_created_subrs.append(subrname)
                     else: # intrinsic type
                         self.create_write_intrinsic(node.kgen_kernel_id, partid, entity_name, stmt, var)
