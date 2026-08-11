@@ -159,6 +159,14 @@ class Extractor(KGTool):
             kgutils.logger.info('Application is being built/run with state generation instrumentation.')
             out, err, retcode = kgutils.run_shcmd('make', cwd='%s/%s'%(Config.path['outdir'], Config.path['state']))
 
+            if retcode != 0:
+                kgutils.logger.error('State capture make failed (return code %d)' % retcode)
+                print 'ERROR: State capture build/run failed (return code %d)' % retcode
+                if err:
+                    print 'STDERR (last 3000 chars):\n%s' % err[-3000:]
+                if out:
+                    print 'STDOUT (last 3000 chars):\n%s' % out[-3000:]
+
             out, err, retcode = kgutils.run_shcmd('make recover', cwd='%s/%s'%(Config.path['outdir'], Config.path['state']))
             if Config.state_switch['clean']:
                 kgutils.run_shcmd(Config.state_switch['clean'])
