@@ -10,6 +10,29 @@ from collections import OrderedDict
 from typedecl_statements import TypeDeclarationStatement
 from block_statements import SubProgramStatement, Associate
 
+def arg_position(items, argobj):
+    """Position of THIS argument node in an actual-argument list, by IDENTITY.
+
+    `items.index(argobj)` is wrong here, and silently so. Fortran2003's `Base`
+    defines `__cmp__` in terms of the node's contents, so two occurrences of the
+    SAME variable in one argument list compare EQUAL -- and `list.index` returns
+    the position of the first of them for both. `CALL GetRoot(RootName,RootName)`
+    (ROSCO's DISCON.F90) therefore resolved BOTH occurrences to argument 0, whose
+    dummy is INTENT(IN), so the caller below never saw the INTENT(OUT) binding
+    and never promoted the variable to STATE_OUT. The generated kernel read the
+    variable as an input and verified nothing at all.
+
+    Identity is the right test because `argobj` is taken out of the traversal's
+    own lineage: it IS the node in the tree, not a copy of it. The value-based
+    lookup is kept as a fallback so this can only ever be more precise than what
+    it replaces, never less.
+    """
+    for idx, item in enumerate(items):
+        if item is argobj:
+            return idx
+    return items.index(argobj)
+
+
 def update_state_info(parent):
 
     def get_nodes(node, bag, depth):
@@ -79,7 +102,7 @@ def update_state_info(parent):
                                                 argidx = subpobj.args.index(kword)
                                             elif isinstance(arglist, Actual_Arg_Spec_List):
                                                 argobj = lineage[lidx+2]
-                                                argidx = arglist.items.index(argobj)
+                                                argidx = arg_position(arglist.items, argobj)
                                                 if isinstance(argobj, Actual_Arg_Spec):
                                                     kword = argobj.items[0].string
                                                     argidx = subpobj.args.index(kword)
@@ -94,7 +117,7 @@ def update_state_info(parent):
                                                 argidx = subpobj.args.index(kword)
                                             elif isinstance(arglist, Section_Subscript_List):
                                                 argobj = lineage[lidx+2]
-                                                argidx = arglist.items.index(argobj)
+                                                argidx = arg_position(arglist.items, argobj)
                                                 if isinstance(argobj, Structure_Constructor_2):
                                                     kword = argobj.items[0].string
                                                     argidx = subpobj.args.index(kword)

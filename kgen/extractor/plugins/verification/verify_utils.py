@@ -2,6 +2,7 @@
 
 from collections import OrderedDict
 from parser import typedecl_statements, block_statements
+from kgutils import sanitize_subpname_part
 
 shared_objects = OrderedDict()
 
@@ -67,7 +68,15 @@ def get_typedecl_subpname(stmt, entity_name):
     var = stmt.get_variable(entity_name)
     if var is None: return 'Unknown_name'
 
-    prefix = [ get_parentname(stmt), stmt.name ] + list(stmt.selector)
+    # SANITISED, the same way the gencore generator has sanitised it since
+    # c839e1a. A selector component is an arbitrary length expression, not an
+    # identifier: ROSCO's `CHARACTER(LEN=size(avcoutname)) :: RootName` produced
+    #     SUBROUTINE kv_discon_character_size(avcoutname)_(...)
+    # which gfortran cannot read. The fix existed one file over and this site
+    # never got it, because no unit had generated a VERIFY subroutine for such a
+    # type until GetRoot did.
+    prefix = [ get_parentname(stmt), stmt.name ] + \
+        [ sanitize_subpname_part(sel) for sel in stmt.selector ]
     l = []
     if var.is_array(): l.append('dim%d'%var.rank)
     if var.is_pointer(): l.append('ptr')

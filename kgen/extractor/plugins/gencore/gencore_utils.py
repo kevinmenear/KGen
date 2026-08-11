@@ -103,31 +103,12 @@ vprefix = 'kv'
 
 MAXLEN_SUBPNAME =40
 
-# A CHARACTER(*) dummy carries the literal '*' as the length half of its
-# selector, and a deferred-length one carries ':'. Both flow into GENERATED
-# PROCEDURE NAMES below, where neither is a legal identifier character:
-#
-#     SUBROUTINE kr_parsedbary_opt_character_*__dim1(...)
-#
-# gfortran rejects that, and the failure is silent in the worst way. The same
-# name generator names the kw_ routines KGen injects into the application for
-# state capture, so the state-generation build fails to compile, the previously
-# installed library stays in place, the simulation runs normally, and extraction
-# reports "No state data captured" -- which reads as an unreached call site
-# rather than a compile error.
-_SUBPNAME_CHARMAP = {'*': 'star', ':': 'colon'}
-
-def sanitize_subpname_part(part):
-    """Make one selector component safe to embed in a Fortran procedure name."""
-    if part is None:
-        return ''
-    out = []
-    for ch in str(part):
-        if ch.isalnum() or ch == '_':
-            out.append(ch)
-        else:
-            out.append(_SUBPNAME_CHARMAP.get(ch, '_'))
-    return ''.join(out)
+# `sanitize_subpname_part` used to be defined here. It now lives in kgutils
+# because the VERIFY generator composes procedure names the same way and did
+# NOT get this fix when it was written, so `CHARACTER(LEN=size(avcoutname))`
+# produced `kv_discon_character_size(avcoutname)_` -- a name with parentheses
+# in it. Two call sites, one rule; the rule has one home. See kgutils.
+from kgutils import sanitize_subpname_part
 
 def is_assumed_length_char(stmt):
     """True for CHARACTER(*) / CHARACTER(LEN=*) declarations.

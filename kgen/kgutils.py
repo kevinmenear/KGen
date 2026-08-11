@@ -5,6 +5,32 @@ import sys
 import logging
 import subprocess
 
+# A CHARACTER(*) dummy carries the literal '*' as the length half of its
+# selector, and a deferred-length one carries ':'. Both flow into GENERATED
+# PROCEDURE NAMES below, where neither is a legal identifier character:
+#
+#     SUBROUTINE kr_parsedbary_opt_character_*__dim1(...)
+#
+# gfortran rejects that, and the failure is silent in the worst way. The same
+# name generator names the kw_ routines KGen injects into the application for
+# state capture, so the state-generation build fails to compile, the previously
+# installed library stays in place, the simulation runs normally, and extraction
+# reports "No state data captured" -- which reads as an unreached call site
+# rather than a compile error.
+_SUBPNAME_CHARMAP = {'*': 'star', ':': 'colon'}
+
+def sanitize_subpname_part(part):
+    """Make one selector component safe to embed in a Fortran procedure name."""
+    if part is None:
+        return ''
+    out = []
+    for ch in str(part):
+        if ch.isalnum() or ch == '_':
+            out.append(ch)
+        else:
+            out.append(_SUBPNAME_CHARMAP.get(ch, '_'))
+    return ''.join(out)
+
 ##############################################
 # KGName
 ##############################################
