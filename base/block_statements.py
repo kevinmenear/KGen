@@ -698,9 +698,9 @@ class SubProgramStatement(BeginStatement, ProgramBlock,
         construct_name = construct_name + ': ' if construct_name else ''
 
         tosubr = False
-        if hasattr(self, 'tosurb'):
+        if hasattr(self, 'tosubr'):
             tosubr = True
-            del self.tosurb
+            del self.tosubr
 
         if tosubr: clsname = 'SUBROUTINE'
         elif isinstance(self, Statement): clsname = self.__class__.__name__.upper()
