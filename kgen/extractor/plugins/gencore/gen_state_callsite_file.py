@@ -611,6 +611,25 @@ class Gen_S_Callsite_File(Kgen_Plugin):
                 'kgen_last_invoke', 'kgen_isstop']}
             part_append_gensnode(ifinit, EXEC_PART, statements.Call, attrs=attrs)
 
+        # Mark that the call site was reached. This block runs once per
+        # process, the first time the call site executes, whether or not any
+        # call falls in the invocation range. Without it, a run that captured
+        # nothing could not say whether the call site never ran or ran only
+        # outside the range. The marker is diagnostic only: IOSTAT keeps a
+        # failure to write it from stopping the program.
+        attrs = {'specs': ['NEWUNIT=kgen_unit', 'FILE="%s/%s.reached"'%(getinfo('kernel_path'), getinfo('kernel_name')), \
+            'STATUS="REPLACE"', 'ACTION="WRITE"', 'IOSTAT=kgen_ierr']}
+        part_append_gensnode(ifinit, EXEC_PART, statements.Open, attrs=attrs)
+
+        attrs = {'expr': 'kgen_ierr == 0'}
+        ifreached = part_append_gensnode(ifinit, EXEC_PART, block_statements.IfThen, attrs=attrs)
+
+        attrs = {'specs': [ 'UNIT=kgen_unit' ]}
+        part_append_gensnode(ifreached, EXEC_PART, statements.Close, attrs=attrs)
+
+        attrs = {'variable': 'kgen_unit', 'sign': '=', 'expr': '-1'}
+        part_append_gensnode(ifinit, EXEC_PART, statements.Assignment, attrs=attrs)
+
         # check save
         if getinfo('is_openmp_app'):
 
